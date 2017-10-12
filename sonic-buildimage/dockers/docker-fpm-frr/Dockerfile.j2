@@ -1,0 +1,32 @@
+FROM docker-config-engine
+
+## Make apt-get non-interactive
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update
+
+RUN apt-get install -y libdbus-1-3 libdaemon0 libjansson4 libc-ares2 iproute
+
+COPY \
+{% for deb in docker_fpm_frr_debs.split(' ') -%}
+debs/{{ deb }}{{' '}}
+{%- endfor -%}
+debs/
+
+RUN dpkg -i \
+{% for deb in docker_fpm_frr_debs.split(' ') -%}
+debs/{{ deb }}{{' '}}
+{%- endfor %}
+
+## Clean up
+RUN apt-get clean -y; apt-get autoclean -y; apt-get autoremove -y
+RUN rm -rf /debs
+
+COPY ["*.j2", "/usr/share/sonic/templates/"]
+COPY ["start.sh", "config.sh", "/usr/bin/"]
+COPY ["daemons", "/etc/frr/"]
+COPY ["debian.conf", "/etc/frr/"]
+
+ENTRYPOINT /usr/bin/config.sh   \
+        && /usr/bin/start.sh    \
+        && /bin/bash

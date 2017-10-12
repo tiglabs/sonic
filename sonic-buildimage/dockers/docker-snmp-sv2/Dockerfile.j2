@@ -1,0 +1,49 @@
+FROM docker-config-engine
+
+COPY [ \
+{% for deb in docker_snmp_sv2_debs.split(' ') -%}
+    "debs/{{ deb }}",
+{%- endfor %} \
+    "/debs/"]
+
+# Install Python SwSSSDK (SNMP subagent dependency)
+COPY python-wheels/swsssdk-*-py3-*.whl /python-wheels/
+COPY python-wheels/asyncsnmp-*-py3-*.whl /python-wheels/
+
+# enable -O for all Python calls
+ENV PYTHONOPTIMIZE 1
+
+## Make apt-get non-interactive
+ENV DEBIAN_FRONTEND=noninteractive
+
+# install libsnmp30 dependencies
+# install libpython3.6-dev dependencies
+# install pip dependencies
+# TODO: remove libpython3.6-dev, its and pip's dependencies if we can get pip3 directly
+# install subagent
+# clean up
+RUN apt-get update && apt-get install -y libperl5.20 libpci3 libwrap0 \
+            libexpat1-dev \
+            curl gcc && \
+    dpkg -i \
+{% for deb in docker_snmp_sv2_debs.split(' ') -%}
+        debs/{{ deb }}{{' '}}
+{%- endfor %} && \
+    rm -rf /debs && \
+    curl https://bootstrap.pypa.io/get-pip.py | python3.6 && \
+    python3.6 -m pip install --no-cache-dir /python-wheels/*py3*.whl hiredis && \
+    rm -rf /python-wheels && \
+    python3.6 -m sonic_ax_impl install && \
+    apt-get -y purge libpython3.6-dev libexpat1-dev curl gcc && \
+    apt-get clean -y && apt-get autoclean -y && apt-get autoremove -y --purge && \
+    find / | grep -E "__pycache__" | xargs rm -rf && \
+    rm -rf ~/.cache
+
+COPY ["start.sh", "/usr/bin/"]
+COPY ["supervisord.conf", "/etc/supervisor/conf.d/"]
+COPY ["*.j2", "/usr/share/sonic/templates/"]
+
+## Although exposing ports is not needed for host net mode, keep it for possible bridge mode
+EXPOSE 161/udp 162/udp
+
+ENTRYPOINT ["/usr/bin/supervisord"]

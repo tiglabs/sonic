@@ -1,0 +1,215 @@
+#!/usr/bin/env python
+"""sonic-cfggen
+
+A tool to read SONiC config data from one or more of the following sources:
+minigraph file, config DB, json file(s), yaml files(s), command line input,
+and write the data into DB, print as json, or render a jinja2 config template.
+
+Examples:
+    Render template with minigraph:        
+        sonic-cfggen -m -t /usr/share/template/bgpd.conf.j2
+    Dump config DB content into json file: 
+        sonic-cfggen -d --print-data > db_dump.json
+    Load content of json file into config DB:
+        sonic-cfggen -j db_dump.json --write-to-db
+See usage string for detail description for arguments.
+"""
+
+import sys
+import os.path
+import argparse
+import yaml
+import jinja2
+import netaddr
+import json
+from functools import partial
+from minigraph import minigraph_encoder
+from minigraph import parse_xml
+from minigraph import parse_device_desc_xml
+from sonic_platform import get_machine_info
+from sonic_platform import get_platform_info
+from swsssdk import ConfigDBConnector
+
+def is_ipv4(value):
+    if not value:
+        return False
+    if isinstance(value, netaddr.IPNetwork):
+        addr = value
+    else:
+        try:
+            addr = netaddr.IPNetwork(str(value))
+        except:
+            return False
+    return addr.version == 4
+
+def is_ipv6(value):
+    if not value:
+        return False
+    if isinstance(value, netaddr.IPNetwork):
+        addr = value
+    else:
+        try:
+            addr = netaddr.IPNetwork(str(value))
+        except:
+            return False
+    return addr.version == 6
+
+def prefix_attr(attr, value):
+    if not value:
+        return None
+    else:
+        try:
+            prefix = netaddr.IPNetwork(str(value))
+        except:
+            return None
+    return str(getattr(prefix, attr))
+
+def unique_name(l):
+    name_list = []
+    new_list = []
+    for item in l:
+        if item['name'] not in name_list:
+            name_list.append(item['name'])
+            new_list.append(item)
+    return new_list
+
+
+class FormatConverter:
+    """Convert config DB based schema to legacy minigraph based schema for backward capability.
+We will move to DB schema and remove this class when the config templates are modified.
+
+TODO(taoyl): Current version of config db only supports BGP admin states.
+    All other configuration are still loaded from minigraph. Plan to remove 
+    minigraph and move everything into config db in a later commit.
+    """
+    @staticmethod
+    def db_to_output(db_data):
+        return db_data
+
+    @staticmethod
+    def output_to_db(output_data):
+        db_data = {}
+        for table_name in output_data:
+            if table_name[0].isupper():
+                db_data[table_name] = output_data[table_name]
+        return db_data
+
+    @staticmethod
+    def to_serialized(data):
+        for table in data:
+            if type(data[table]) is dict:
+                for key in data[table].keys():
+                    new_key = ConfigDBConnector.serialize_key(key)
+                    if new_key != key:
+                        data[table][new_key] = data[table].pop(key)
+        return data
+
+    @staticmethod
+    def to_deserialized(data):
+        for table in data:
+            if type(data[table]) is dict:
+                for key in data[table].keys():
+                    new_key = ConfigDBConnector.deserialize_key(key)
+                    if new_key != key:
+                        data[table][new_key] = data[table].pop(key)
+        return data
+
+
+def deep_update(dst, src):
+    for key, value in src.iteritems():
+        if isinstance(value, dict):
+             node = dst.setdefault(key, {})
+             deep_update(node, value)
+        else:
+             dst[key] = value
+    return dst
+
+
+def main():
+    parser=argparse.ArgumentParser(description="Render configuration file from minigraph data and jinja2 template.")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("-m", "--minigraph", help="minigraph xml file", nargs='?', const='/etc/sonic/minigraph.xml')
+    group.add_argument("-M", "--device-description", help="device description xml file")
+    parser.add_argument("-p", "--port-config", help="port config file, used with -m")
+    parser.add_argument("-y", "--yaml", help="yaml file that contains additional variables", action='append', default=[])
+    parser.add_argument("-j", "--json", help="json file that contains additional variables", action='append', default=[])
+    parser.add_argument("-a", "--additional-data", help="addition data, in json string")
+    parser.add_argument("-d", "--from-db", help="read config from configdb", action='store_true')
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("-t", "--template", help="render the data with the template file")
+    group.add_argument("-v", "--var", help="print the value of a variable, support jinja2 expression")
+    group.add_argument("--var-json", help="print the value of a variable, in json format")
+    group.add_argument("--write-to-db", help="write config into configdb", action='store_true')
+    group.add_argument("--print-data", help="print all data", action='store_true')
+    args = parser.parse_args()
+
+    data = {}
+    machine_info = get_machine_info()
+    if machine_info != None:
+        deep_update(data, machine_info)
+        platform_info = get_platform_info(machine_info)
+        if platform_info != None:
+            data['platform'] = platform_info
+
+    if args.minigraph != None:
+        minigraph = args.minigraph
+        if data.has_key('platform'):
+            if args.port_config != None:
+                deep_update(data, parse_xml(minigraph, data['platform'], args.port_config))
+            else:
+                deep_update(data, parse_xml(minigraph, data['platform']))
+        else:
+            if args.port_config != None:
+                deep_update(data, parse_xml(minigraph, port_config_file=args.port_config))
+            else:
+                deep_update(data, parse_xml(minigraph))
+
+    if args.device_description != None:
+        deep_update(data, parse_device_desc_xml(args.device_description))
+
+    for yaml_file in args.yaml:
+        with open(yaml_file, 'r') as stream:
+            additional_data = yaml.load(stream)      
+            deep_update(data, FormatConverter.to_deserialized(additional_data))
+
+    for json_file in args.json:
+        with open(json_file, 'r') as stream:
+            deep_update(data, FormatConverter.to_deserialized(json.load(stream)))
+
+    if args.additional_data != None:
+        deep_update(data, json.loads(args.additional_data))
+  
+    if args.from_db:
+        configdb = ConfigDBConnector()
+        configdb.connect()
+        deep_update(data, FormatConverter.db_to_output(configdb.get_config()))
+
+    if args.template != None:
+        template_file = os.path.abspath(args.template)
+        env = jinja2.Environment(loader=jinja2.FileSystemLoader('/'), trim_blocks=True)
+        env.filters['ipv4'] = is_ipv4
+        env.filters['ipv6'] = is_ipv6
+        env.filters['unique_name'] = unique_name
+        for attr in ['ip', 'network', 'prefixlen', 'netmask']:
+            env.filters[attr] = partial(prefix_attr, attr)
+        template = env.get_template(template_file)
+        print template.render(data)
+    
+    if args.var != None:
+        template = jinja2.Template('{{' + args.var + '}}')
+        print template.render(data)
+
+    if args.var_json != None:
+        print json.dumps(FormatConverter.to_serialized(data[args.var_json]), indent=4, cls=minigraph_encoder)
+
+    if args.write_to_db:
+        configdb = ConfigDBConnector()
+        configdb.connect(False)
+        configdb.set_config(FormatConverter.output_to_db(data))
+
+    if args.print_data:
+        print json.dumps(FormatConverter.to_serialized(data), indent=4, cls=minigraph_encoder)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,12 @@
+[Unit]
+Description=Update NTP configuration
+Before=ntp.service
+Requires=database.service
+After=database.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/ntp-config.sh
+
+[Install]
+WantedBy=multi-user.target

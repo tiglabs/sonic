@@ -1,0 +1,5 @@
+z9100/scripts/check_qsfp.sh usr/local/bin
+z9100/scripts/z9100_platform_init.sh usr/local/bin
+z9100/scripts/platform_sensors.py usr/local/bin
+z9100/scripts/sensors usr/bin
+z9100/cfg/z9100-modules.conf etc/modules-load.d

@@ -1,0 +1,64 @@
+#!/bin/bash
+
+# Check root privileges
+if [ "$EUID" -ne 0 ]
+then
+  echo "Please run as root"
+  exit
+fi
+
+
+# Unload the previously loaded kernel if any loaded
+if [ "$(cat /sys/kernel/kexec_loaded)" -eq 1 ]
+then
+  /sbin/kexec -u
+fi
+
+# Kernel and initrd image
+NEXT_SONIC_IMAGE=$(sonic_installer list | grep "Next: " | cut -d ' ' -f 2)
+KERNEL_OPTIONS=$(cat /host/grub/grub.cfg | sed "/$NEXT_SONIC_IMAGE'/,/}/"'!'"g" | grep linux)
+KERNEL_IMAGE="/host$(echo $KERNEL_OPTIONS | cut -d ' ' -f 2)"
+BOOT_OPTIONS="$(echo $KERNEL_OPTIONS | sed -e 's/\s*linux\s*/BOOT_IMAGE=/') fast-reboot"
+INITRD=$(echo $KERNEL_IMAGE | sed 's/vmlinuz/initrd.img/g')
+
+sonic_asic_type=$(sonic-cfggen -y /etc/sonic/sonic_version.yml -v asic_type)
+
+# Load kernel into the memory
+/sbin/kexec -l "$KERNEL_IMAGE" --initrd="$INITRD" --append="$BOOT_OPTIONS"
+
+# Dump the ARP and FDB tables to files
+/usr/bin/fast-reboot-dump.py
+docker cp /tmp/fdb.json swss:/
+docker cp /tmp/arp.json swss:/
+
+# Kill bgpd to enable graceful restart of BGP
+docker exec -ti bgp killall -9 watchquagga
+docker exec -ti bgp killall -9 zebra
+docker exec -ti bgp killall -9 bgpd
+
+# Kill lldp, otherwise it sends informotion about reboot
+docker kill lldp
+
+# Kill teamd, otherwise it gets down all LAGs
+docker kill teamd
+
+# Kill other containers to make reboot faster
+docker ps -qa | xargs docker kill
+
+# Stop the docker container engine. Otherwise we will have a broken docker storage
+systemctl stop docker.service
+
+# Stop opennsl modules for Broadcom platform
+if [ "$sonic_asic_type" = 'broadcom' ];
+then
+ systemctl stop opennsl-modules-3.16.0-4-amd64.service
+fi
+
+# Wait until all buffers synced with disk
+sync
+sleep 1
+sync
+
+# Reboot
+echo "Rebooting to $NEXT_SONIC_IMAGE..."
+reboot

@@ -1,0 +1,98 @@
+###############################################################################
+## FUNCTIONS
+###############################################################################
+
+###############################################################################
+## Colored output
+###############################################################################
+
+# Enable colored output
+ifeq ($(SONIC_CONFIG_ENABLE_COLORS),y)
+ifeq ($(MAKE_TERMOUT),)
+RED=\033[1;31m
+PURPLE=\033[1;35m
+CYAN=\033[1;36m
+GREEN=\033[1;32m
+GRAY=\033[0m
+endif
+endif
+
+# Print red colored output
+# call:
+#       log_red message
+log_red = echo -e "$(RED)$(1)$(GRAY)"
+
+# Print purple colored output
+# call:
+#       log_purple message
+log_purple = echo -e "$(PURPLE)$(1)$(GRAY)"
+
+# Print blue colored output
+# call:
+#       log_blue message
+log_blue = echo -e "$(CYAN)$(1)$(GRAY)"
+
+# Print green colored output
+# call:
+#       log_green message
+log_green = echo -e "$(GREEN)$(1)$(GRAY)"
+
+###############################################################################
+## Logging
+###############################################################################
+
+FLUSH_LOG = rm -f $@.log
+
+LOG = &>> $(PROJECT_ROOT)/$@.log || { [ $$? -eq 0 ] || pushd $(PROJECT_ROOT) > /dev/null ; ./update_screen.sh -e $@ ; popd > /dev/null ; false ; }
+
+###############################################################################
+## Header and footer for each target
+###############################################################################
+
+# Dump targets taht current depends on
+ifeq ($(SONIC_CONFIG_PRINT_DEPENDENCIES),y)
+PRINT_DEPENDENCIES = echo Dependencies for $@ are $^ $(LOG)
+endif
+
+# header for each rule
+define HEADER
+@
+$(PRINT_DEPENDENCIES)
+$(FLUSH_LOG)
+./update_screen.sh -a $@
+endef
+
+# footer for each rule
+define FOOTER
+./update_screen.sh -d $@
+endef
+
+###############################################################################
+## Definition of derived target
+###############################################################################
+
+# call:
+#     add_derived_package some_deb.deb, some_derived_deb
+define add_derived_package
+$(2)_DEPENDS += $(1)
+$(2)_RDEPENDS += $($(1)_RDEPENDS)
+$(2)_MAIN_DEB = $(1)
+$(1)_DERIVED_DEBS += $(2)
+$(2)_URL = $($(1)_URL)
+$(2)_SRC_PATH = $($(1)_SRC_PATH)
+SONIC_DERIVED_DEBS += $(2)
+endef
+
+# call:
+#     add_extra_package some_deb.deb, some_extra_deb
+define add_extra_package
+$(2)_MAIN_DEB = $(1)
+$(1)_EXTRA_DEBS += $(2)
+SONIC_EXTRA_DEBS += $(2)
+endef
+
+###############################################################################
+## Utility functions
+###############################################################################
+
+expand = $(foreach d,$(1),$(call expand,$($(d)_$(2)),$(2))) $(1)

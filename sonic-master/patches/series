@@ -1,0 +1,3 @@
+arista-BUG73862-add-raven-mux-to-piix4.patch
+linux-2.6.32-net-tg3-dma-mask-4g-sb800.patch
+linux-2.6.38-net-tg3-access-regs-indirectly.patch

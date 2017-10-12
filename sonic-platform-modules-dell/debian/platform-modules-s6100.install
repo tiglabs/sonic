@@ -1,0 +1,5 @@
+s6100/scripts/io_rd_wr.py usr/local/bin
+s6100/scripts/iom_power_*.sh usr/local/bin
+s6100/scripts/s6100_platform_init.sh usr/local/bin
+s6100/scripts/platform_sensors.py usr/local/bin
+s6100/scripts/sensors usr/bin

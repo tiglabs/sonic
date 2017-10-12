@@ -1,0 +1,95 @@
+#!/bin/bash
+
+if [ ! -f /etc/sonic/updategraph.conf ]; then
+    echo "No updategraph.conf found, generating a default one."
+    echo "enabled=false" >/etc/sonic/updategraph.conf
+fi
+
+. /etc/sonic/updategraph.conf
+
+if [ "$enabled" != "true" ]; then
+    echo "Disabled in updategraph.conf. Skipping graph update."
+    exit 0
+fi
+
+ACL_URL=$acl_src
+
+if [ "$src" = "dhcp" ]; then
+    while [ ! -f /tmp/dhcp_graph_url ]; do
+        echo "Waiting for DHCP response..."
+        sleep 1
+    done
+
+    if [ "`cat /tmp/dhcp_graph_url`" = "N/A" ]; then
+        echo "No graph_url option in DHCP response. Skipping graph update."
+        if [ "$dhcp_as_static" = "true" ]; then
+            sed -i "/enabled=/d" /etc/sonic/updategraph.conf
+            echo "enabled=false" >> /etc/sonic/updategraph.conf
+        fi
+        exit 0
+    fi
+
+    HOSTNAME=`hostname -s`
+    GRAPH_URL=`sonic-cfggen -t /tmp/dhcp_graph_url -a "{\"hostname\": \"$HOSTNAME\"}"`
+    URL_REGEX='^(https?|ftp|file)://[-A-Za-z0-9\+&@#/%?=~_|!:,.;]*[-A-Za-z0-9\+&@#/%=~_|]$'
+    if [[ ! $GRAPH_URL =~ $URL_REGEX ]]; then
+        echo "\"$GRAPH_URL\" is not a valid url. Skipping graph update."
+        exit 0
+    fi
+    if [ "$dhcp_as_static" = "true" ]; then
+        sed -i "/src=/d" /etc/sonic/updategraph.conf
+        echo "src=\"$GRAPH_URL\"" >> /etc/sonic/updategraph.conf
+    fi
+
+    if [ -f /tmp/dhcp_acl_url ]; then
+        ACL_URL=`sonic-cfggen -t /tmp/dhcp_acl_url -a "{\"hostname\": \"$HOSTNAME\"}"`
+        if [[ ! $ACL_URL =~ $URL_REGEX ]]; then
+            echo "\"$ACL_URL\" is not a valid url. Skipping acl update."
+            ACL_URL=""
+        fi
+        if [ "$dhcp_as_static" = "true" ]; then
+            sed -i "/acl_src=/d" /etc/sonic/updategraph.conf
+            echo "acl_src=\"$ACL_URL\"" >> /etc/sonic/updategraph.conf
+        fi
+    fi
+else
+    GRAPH_URL=$src
+fi
+
+if [ -f /etc/sonic/minigraph.xml ]; then
+    echo "Renaming minigraph.xml to minigraph.old"
+    mv /etc/sonic/minigraph.xml /etc/sonic/minigraph.old
+fi
+
+echo "Getting minigraph from $GRAPH_URL"
+
+while true; do
+    curl -f $GRAPH_URL -o /etc/sonic/minigraph.xml --connect-timeout 15 && break
+    sleep 5
+done
+
+echo "Regenerating config DB from minigraph..."
+if [ -f /etc/sonic/init_cfg.json ]; then
+    sonic-cfggen -m -j /etc/sonic/init_cfg.json --print-data > /etc/sonic/config_db.json
+else
+    sonic-cfggen -m --print-data > /etc/sonic/config_db.json
+fi
+
+# Mark as disabled after graph is successfully downloaded
+sed -i "/enabled=/d" /etc/sonic/updategraph.conf
+echo "enabled=false" >> /etc/sonic/updategraph.conf
+
+if [ -n "$ACL_URL" ]; then
+    if [ -f /etc/sonic/acl.json ]; then
+        echo "Renaming acl.json to acl.json.old"
+        mv /etc/sonic/acl.json /etc/sonic/acl.json.old
+    fi
+    echo "Getting ACL config from $ACL_URL"
+
+    while true; do
+        curl -f $ACL_URL -o /etc/sonic/acl.json --connect-timeout 15 && break
+        sleep 5
+    done
+else
+    echo "Skip ACL config download."
+fi

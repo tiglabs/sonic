@@ -1,0 +1,50 @@
+[Unit]
+Description=switch state service
+Requires=database.service
+{% if sonic_asic_platform == 'broadcom' %}
+Requires=opennsl-modules-3.16.0-4-amd64.service
+{% endif %}
+After=database.service
+After=interfaces-config.service
+{% if sonic_asic_platform == 'broadcom' %}
+After=opennsl-modules-3.16.0-4-amd64.service
+{% endif %}
+
+[Service]
+User=root
+# Wait for redis server start before database clean
+ExecStartPre=/bin/bash -c "while true; do if [ \"$(/usr/bin/docker exec database redis-cli ping)\" == \"PONG\" ]; then break; fi; sleep 1; done"
+ExecStartPre=/usr/bin/docker exec database redis-cli -n 0 FLUSHDB
+ExecStartPre=/usr/bin/docker exec database redis-cli -n 1 FLUSHDB
+ExecStartPre=/usr/bin/docker exec database redis-cli -n 2 FLUSHDB
+ExecStartPre=/usr/bin/docker exec database redis-cli -n 5 FLUSHDB
+
+{% if sonic_asic_platform == 'mellanox' %}
+TimeoutStartSec=3min
+ExecStartPre=/usr/bin/mst start
+ExecStartPre=/usr/bin/mlnx-fw-upgrade.sh
+ExecStartPre=/etc/init.d/sxdkernel start
+ExecStartPre=/sbin/modprobe i2c-dev
+ExecStartPre=/bin/bash -c "/usr/share/sonic/device/$(sonic-cfggen -v platform)/hw-management start"
+{% elif sonic_asic_platform == 'cavium' %}
+ExecStartPre=/etc/init.d/xpnet.sh start
+{% endif %}
+
+ExecStartPre=/usr/bin/{{docker_container_name}}.sh start 
+ExecStartPre=/usr/bin/syncd.sh start
+ExecStart=/usr/bin/{{docker_container_name}}.sh attach
+
+ExecStop=/usr/bin/{{docker_container_name}}.sh stop
+ExecStopPost=/usr/bin/syncd.sh stop
+
+{% if sonic_asic_platform == 'mellanox' %}
+ExecStopPost=/bin/bash -c "/usr/share/sonic/device/$(sonic-cfggen -v platform)/hw-management stop"
+ExecStopPost=/etc/init.d/sxdkernel stop
+ExecStopPost=/usr/bin/mst stop
+{% elif sonic_asic_platform == 'cavium' %}
+ExecStopPost=/etc/init.d/xpnet.sh stop
+ExecStopPost=/etc/init.d/xpnet.sh start
+{% endif %}
+
+[Install]
+WantedBy=multi-user.target

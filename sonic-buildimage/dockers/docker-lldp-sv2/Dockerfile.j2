@@ -1,0 +1,37 @@
+FROM docker-config-engine
+
+COPY \
+{% for deb in docker_lldp_sv2_debs.split(' ') -%}
+debs/{{ deb }}{{' '}}
+{%- endfor -%}
+debs/
+
+COPY python-wheels /python-wheels
+
+## Make apt-get non-interactive
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y python-pip libbsd0 libevent-2.0-5 libjansson4 libwrap0 libxml2 libpci3 libperl5.20 
+
+# Pre-install the fundamental packages
+# Install Python SwSS SDK
+# Install LLDP Sync Daemon
+
+RUN dpkg -i \
+{% for deb in docker_lldp_sv2_debs.split(' ') -%}
+debs/{{ deb }}{{' '}}
+{%- endfor %}
+
+RUN pip install /python-wheels/swsssdk-2.0.1-py2-none-any.whl && \
+    pip install /python-wheels/sonic_d-2.0.0-py2-none-any.whl && \
+    apt-get remove -y python-pip && \
+    apt-get purge -y && apt-get autoclean -y && apt-get autoremove -y && \
+    rm -rf /debs /python-wheels ~/.cache
+
+COPY ["start.sh", "/usr/bin/"]
+COPY ["supervisord.conf", "/etc/supervisor/conf.d/"]
+COPY ["reconfigure.sh", "/opt/"]
+COPY ["lldpd.conf.j2", "/usr/share/sonic/templates/"]
+COPY ["lldpd", "/etc/default/"]
+
+ENTRYPOINT ["/usr/bin/supervisord"]

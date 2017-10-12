@@ -1,0 +1,38 @@
+FROM docker-config-engine
+
+## Make apt-get non-interactive
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update
+
+COPY \
+{% for deb in docker_database_debs.split(' ') -%}
+debs/{{ deb }}{{' '}}
+{%- endfor -%}
+debs/
+
+## Install redis-tools dependencies
+## TODO: implicitly install dependencies
+RUN apt-get -y install libjemalloc1
+
+RUN dpkg -i \
+{% for deb in docker_database_debs.split(' ') -%}
+debs/{{ deb }}{{' '}}
+{%- endfor %}
+
+## Clean up
+RUN apt-get clean -y; apt-get autoclean -y; apt-get autoremove -y
+RUN rm -rf /debs
+
+RUN sed -ri 's/^(save .*$)/# \1/g;                                                    \
+             s/^daemonize yes$/daemonize no/;                                           \
+             s/^logfile .*$/logfile ""/;                                                \
+             s/^# syslog-enabled no$/syslog-enabled no/;                                \
+             s/^# unixsocket/unixsocket/;                                               \
+             s/^client-output-buffer-limit pubsub [0-9]+mb [0-9]+mb [0-9]+/client-output-buffer-limit pubsub 0 0 0/ \
+            ' /etc/redis/redis.conf
+
+COPY ["supervisord.conf", "/etc/supervisor/conf.d/"]
+COPY ["configdb-load.sh", "/usr/bin/"]
+
+ENTRYPOINT ["/usr/bin/supervisord"]
