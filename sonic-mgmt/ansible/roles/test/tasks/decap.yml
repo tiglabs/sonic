@@ -1,0 +1,80 @@
+#-----------------------------------------
+# Run Decap test
+#-----------------------------------------
+
+- fail: msg="information about testbed missing."
+  when: (testbed_type is not defined) or
+        (dscp_mode is not defined) 
+
+- fail: msg="Invalid testbed_type value '{{testbed_type}}'"
+  when: testbed_type not in [ 't1', 't0', 't1-lag', 't1-64-lag']
+
+- fail: msg="Invalid testbed_type value '{{dscp_mode}}'"
+  when: dscp_mode not in [ 'pipe','uniform']
+
+- include_vars: "vars/topo_{{testbed_type}}.yml"
+
+- name: Expand properties into props
+  set_fact: props="{{configuration_properties['spine']}}"
+  when: testbed_type in ['t1', 't1-lag', 't1-64-lag']
+
+- name: Expand properties into props
+  set_fact: props="{{configuration_properties['common']}}"
+  when: testbed_type in ['t0']
+
+- name: Expand properties into props
+  set_fact: props_tor="{{configuration_properties['tor']}}"
+  when: testbed_type in ['t1', 't1-lag', 't1-64-lag']
+
+# Gather minigraph facts
+- name: Gathering minigraph facts about the device
+  minigraph_facts: host={{ inventory_hostname }}
+  become: no
+  connection: local
+
+# Obtain loopback ip of the device
+- name: Obtain loopback ip of the device
+  set_fact: lo_ip="{{ minigraph_lo_interfaces[0]['addr'] }}"
+
+- name: print loopback ip
+  debug: msg="{{ lo_ip }}"
+
+# Generate file with BGP routes information
+- template: src=roles/test/templates/fib.j2 dest=/tmp/fib_info.txt
+  connection: local
+
+# Copy the fib_info to ptf container
+- template: src=/tmp/fib_info.txt dest=/root
+  connection: local
+  delegate_to: "{{ ptf_host }}"
+
+- set_fact:
+    testname: decap
+
+# Separate set_fact is required to be able to use 'testname' fact.
+- set_fact:
+    testname_unique: "{{ testname }}.{{ ansible_date_time.date}}.{{ ansible_date_time.hour}}-{{ ansible_date_time.minute}}-{{ ansible_date_time.second}}"
+
+- debug: msg="generated run id:{{testname_unique}}"
+
+- debug : msg="INVOKE DECAP TEST"
+
+- name: copy the test to ptf container
+  copy: src=roles/test/files/ptftests dest=/root
+  delegate_to: "{{ ptf_host }}"
+
+- name: "Running test {{ testname }}"
+  include: ptf_runner.yml
+  vars:
+    ptf_test_name: '{{ testname_unique }}'
+    ptf_test_dir: ptftests
+    ptf_test_path: IP_decap_test.DecapPacketTest
+    ptf_platform: remote
+    ptf_extra_options: --platform-dir ptftests
+    ptf_test_params:
+      - testbed_type='{{ testbed_type }}'
+      - fib_info='/root/fib_info.txt'
+      - router_mac='{{ansible_Ethernet0['macaddress']}}'
+      - dscp_mode='{{ dscp_mode }}'
+      - lo_ip='{{ lo_ip }}'
+    ptf_extra_options:  "--relax --debug info --log-file /tmp/{{ testname_unique }}.log "

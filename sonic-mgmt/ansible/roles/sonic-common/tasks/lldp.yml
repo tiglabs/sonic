@@ -1,0 +1,56 @@
+- name: Clean up old container
+  include: sonicdocker.yml
+  vars:
+    docker_container: docker-lldp
+    docker_image: "{{ image_id_lldp }}"
+    docker_privileged: yes
+    docker_state: absent
+
+- name: switch LLDP image based on SONiC version
+  set_fact:
+    image_id_lldp: "{{ image_id_lldp_sv2 }}"
+  when: sonic_version == "v2"
+
+- name: Ensure LLDP container started
+  include: sonicdocker.yml
+  vars:
+    docker_container: lldp
+    docker_image: "{{ image_id_lldp }}"
+    docker_privileged: yes
+    docker_state: reloaded
+    docker_volumes_from:
+    - database
+    docker_volumes:
+      - /etc/sonic/:/etc/sonic/:ro
+
+- block:
+  - name: Setup LLDPD Daemon Config File
+    become: true
+    template: src=lldpd
+              dest=/etc/default/lldpd
+    notify:
+      - Restart LLDP Daemon
+      - Restart SNMP Daemon
+
+  - name: Setup LLDPD Daemon Config File
+    become: true
+    copy: src="ssw/{{sonic_hwsku}}/etc/lldpd.conf"
+          dest=/etc/lldpd.conf
+    notify:
+      - Restart LLDP Daemon
+      - Restart SNMP Daemon
+    when: sonic_hwsku == 'Force10-S6000'
+  # Force handler flush to trigger daemon restarts
+  - meta: flush_handlers
+
+  vars:
+    ansible_shell_type: docker
+    ansible_python_interpreter: docker exec -i lldp python
+
+- name: Copy lldpctl helper script
+  become: true
+  copy: src=bin/lldpctl
+        dest=/usr/sbin/lldpctl
+        owner=root
+        group=root
+        mode=0755

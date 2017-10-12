@@ -1,0 +1,7 @@
+# This file describes the maintainers for sonic-py-swsssdk
+# See the SONiC project governance document for more information
+
+Name = "Thomas Booth"
+Email = "thomasbo@microsoft.com"
+Github = tombo315
+Mailinglist = sonicproject@googlegroups.com

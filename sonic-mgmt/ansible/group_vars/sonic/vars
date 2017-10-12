@@ -1,0 +1,42 @@
+ansible_ssh_user: admin
+
+sonic_version: "v2"
+
+broadcom_hwskus: [ 'Force10-S6000' ]
+
+mellanox_hwskus: [ 'ACS-MSN2700' ]
+
+cavium_hwskus: [ "AS7512", "XP-SIM" ]
+
+sensor_hwskus: [ "ACS-MSN2700", "Force10-S6000" ]
+
+## Note:
+## Docker volumes should be list instead of dict. However, if we want to keep code DRY, we
+## need to merge dictionaries, and convert them to list
+## Ref:
+## 1. http://stackoverflow.com/questions/9254178/is-there-yaml-syntax-for-sharing-part-of-a-list-or-map
+## 2. https://groups.google.com/forum/#!msg/ansible-project/M-FNUK9Wz98/gH63Ka4hDAAJ
+
+sswsyncd_docker_volumes_dict:
+  "/etc/ssw/:/etc/ssw/:ro":
+  "/etc/sonic/:/etc/sonic/:ro":
+  "/etc/network/interfaces:/etc/network/interfaces:ro":
+  "/var/run/docker-syncd:/var/run/sswsyncd":
+
+sswsyncd_docker_volumes: "{{ sswsyncd_docker_volumes_dict.keys() }}"
+
+syncd_docker_volumes_dict:
+  "/host/machine.conf:/etc/machine.conf":
+  "/var/run/docker-syncd:/var/run/sswsyncd":
+  "/etc/sonic/:/etc/sonic/:ro":
+
+syncd_docker_volumes: "{{ syncd_docker_volumes_dict.keys() }}"
+
+orchagent_docker_volumes_dict:
+  "/etc/ssw/:/etc/ssw/:ro":
+  "/etc/sonic/:/etc/sonic/:ro":
+  "/etc/network/interfaces:/etc/network/interfaces:ro":
+  "/etc/network/interfaces.d/:/etc/network/interfaces.d/:ro":
+  "/host/machine.conf:/host/machine.conf":
+
+orchagent_docker_volumes: "{{ orchagent_docker_volumes_dict.keys() }}"
